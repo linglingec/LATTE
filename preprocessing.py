@@ -236,7 +236,7 @@ def generate_client_descriptions(df, user_col, time_col, amount_col, category_co
 
     # Initialize the Gemma 3 model pipeline
     model_id = "google/gemma-3-27b-it"
-    hf_token = "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"
+    hf_token = "YOUR_TOKEN"
 
     model = Gemma3ForConditionalGeneration.from_pretrained(model_id, device_map="auto", token=hf_token).eval()
     
