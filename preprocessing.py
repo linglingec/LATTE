@@ -1,6 +1,5 @@
 import pandas as pd
 import torch
-from transformers import AutoProcessor, Gemma3ForConditionalGeneration
 from datetime import datetime
 from tqdm import tqdm
 import numpy as np
@@ -250,92 +249,3 @@ def generate_prompts(df, user_col, dataset_name):
         prompts.append((row[user_col], prompt))
     
     return prompts
-
-def query_llm(prompt, processor, model):
-    """
-    Sends the prompt to the LLM and retrieves a generated response.
-
-    Args:
-        prompt (str): The prompt describing a user's transaction behavior.
-
-    Returns:
-        str: Generated financial behavior summary from the model.
-    """
-
-    system_message = """You are an expert in financial transaction analysis. Your task is to generate clear, structured, and concise descriptions of user financial behavior based on given transaction data. Use data-driven insights and avoid speculation.
-    ⚠️ Do **not** include introductory phrases like "Here's a financial behavior description for User X" or "Based on the provided data."  
-    ⚠️ Start **directly** with the financial behavior insights.  
-    ⚠️ Interpret numerical statistics **into meaningful behavioral patterns** rather than just restating them.  
-    ⚠️ Highlight **spending habits, preferred transaction methods, risk patterns, and financial consistency**.  
-    ⚠️ If applicable, discuss whether spending habits indicate **financial stability, risk-taking behavior, or specific lifestyle patterns**.  
-    ⚠️ Keep responses **factual, structured, and data-driven** without making assumptions beyond the provided data.
-    """
-
-    # Prepare the input message in the required format
-    messages = [
-        {
-            "role": "system",
-            "content": [{"type": "text", "text": system_message}]
-        },
-        {
-            "role": "user",
-            "content": [{"type": "text", "text": prompt}]
-        }
-    ]
-
-    # Generate the response
-    inputs = processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=True, 
-                        return_dict=True, return_tensors="pt").to(model.device, dtype=torch.bfloat16)
-
-    input_len = inputs["input_ids"].shape[-1]
-
-    with torch.inference_mode():
-        generation = model.generate(**inputs, max_new_tokens=500, do_sample=True)
-        generation = generation[0][input_len:]
-    
-    decoded = processor.decode(generation, skip_special_tokens=True)
-    return decoded
-
-# Main function: processes dataset and generates user descriptions
-def generate_client_descriptions(df, user_col, time_col, amount_col, start_from_id=None, category_col=None, type_col=None, dataset_name="gender", output_path="client_descriptions.csv"):
-    """
-    Processes transactional data, generates prompts, and retrieves LLM-generated descriptions.
-
-    Args:
-        df (pd.DataFrame): The raw transaction dataset.
-        user_col (str): The column name for user identification.
-        time_col (str): The column name for timestamps.
-        amount_col (str): The column name for transaction amounts.
-        category_col (str, optional): The column name for transaction categories.
-        type_col (str, optional): The column name for transaction types.
-        dataset_name (str): The dataset name to adjust preprocessing logic.
-        output_path (str): Path to the output CSV file.
-    """
-    processed_df = preprocess_transactions(df, user_col, time_col, amount_col, category_col, type_col, dataset_name)
-    if start_from_id is not None:
-        processed_df = processed_df[processed_df[user_col] > start_from_id]
-    prompts = generate_prompts(processed_df, user_col, dataset_name)
-
-    descriptions = []
-
-    # Initialize the Gemma 3 model pipeline
-    model_id = "google/gemma-3-27b-it"
-    hf_token = "YOUR_TOKEN"
-
-    model = Gemma3ForConditionalGeneration.from_pretrained(model_id, device_map="auto", token=hf_token).eval()
-    
-    processor = AutoProcessor.from_pretrained(model_id, token=hf_token)
-
-    # Write header to the output CSV if it doesn't exist
-    if not os.path.isfile(output_path):
-        with open(output_path, mode='w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=["id", "description"])
-            writer.writeheader()
-
-    for user_id, prompt in tqdm(prompts, total=len(prompts), desc="Generating LLM responses", ncols=80):
-        llm_response = query_llm(prompt, processor, model)
-        descriptions.append({"user_id": user_id, "description": llm_response})
-
-        with open(output_path, mode='a', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=["id", "description"])
-            writer.writerow({"id": user_id, "description": llm_response})
